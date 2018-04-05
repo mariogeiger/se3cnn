@@ -17,7 +17,7 @@ from functools import partial
 from se3_cnn.blocks import GatedBlock
 from se3_cnn.blocks import NormBlock
 from se3_cnn import SE3BatchNorm
-from se3_cnn import SE3Convolution
+from se3_cnn import SE3Convolution, SE3BNConvolution
 from se3_cnn import basis_kernels
 
 from se3_cnn.non_linearities import NormRelu
@@ -589,7 +589,7 @@ def main(args, data_filename, model_class, initial_lr, lr_decay_start, lr_decay_
     # split up parameters into groups, named_parameters() returns tupels ('name', parameter)
     # each group gets its own regularization gain
     convLayers = [m for m in model.modules()
-                  if isinstance(m, (SE3Convolution, nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d))]
+                  if isinstance(m, (SE3Convolution, SE3BNConvolution, nn.Conv1d, nn.Conv2d, nn.Conv3d, nn.ConvTranspose1d, nn.ConvTranspose2d, nn.ConvTranspose3d))]
     normActivs = [m for m in model.modules() if isinstance(m, (NormSoftplus, NormRelu, ScalarActivation))]
     batchnormLayers = [m for m in model.modules() if isinstance(m, (SE3BatchNorm, nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d))]
     linearLayers = [m for m in model.modules() if isinstance(m, nn.Linear)]
