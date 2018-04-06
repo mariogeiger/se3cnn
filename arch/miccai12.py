@@ -15,6 +15,7 @@ from functools import partial
 
 from se3_cnn.blocks import GatedBlock
 from se3_cnn.datasets import MRISegmentation
+from se3_cnn import basis_kernels
 
 
 class FlattenSpacial(nn.Module):
@@ -25,64 +26,9 @@ class FlattenSpacial(nn.Module):
         return x.view(x.size(0), -1, x.size(-3)*x.size(-2)*x.size(-1))
 
 
-# class Model(nn.Module):
-
-#     def __init__(self, output_size, filter_size=5):
-#         super(Model, self).__init__()
-
-#         features = [(1,),
-#                     (4, 4, 4, 4),
-#                     (4, 4, 4, 4),
-#                     # (4, 4, 4, 4),
-#                     (output_size,)]
-
-#         from se3_cnn import basis_kernels
-#         radial_window_dict = {
-#             'radial_window_fct': basis_kernels.gaussian_window_fct_convenience_wrapper,
-#             'radial_window_fct_kwargs': {
-#                 'mode': 'compromise',
-#                 'border_dist': 0.,
-#                 'sigma': .6
-#             }
-#         }
-#         common_block_params = {
-#             'size': filter_size,
-#             'padding': filter_size//2,
-#             'stride': 1,
-
-
-#             'normalization': 'instance',
-
-
-#             'radial_window_dict': radial_window_dict
-#         }
-
-#         block_params = [
-#             {'activation': (F.relu, F.sigmoid)},
-#             {'activation': (F.relu, F.sigmoid)},
-#             # {'activation': (F.relu, F.sigmoid)},
-#             {'activation': None},
-#         ]
-
-#         assert len(block_params) + 1 == len(features)
-
-#         blocks = [GatedBlock(features[i], features[i + 1],
-#                              **common_block_params, **block_params[i])
-#                   for i in range(len(block_params))]
-
-#         self.layers = torch.nn.Sequential(
-#             *blocks,
-#         )
-
-#     def forward(self, x):
-#         out = self.layers(x)
-#         return out
-
-
-
-class Model(nn.Module):
+class BasicModel(nn.Module):
     def __init__(self, output_size, filter_size=5):
-        super(Model, self).__init__()
+        super(BasicModel, self).__init__()
         size = filter_size
         bias = True
         self.layers = nn.Sequential(
@@ -101,15 +47,203 @@ class Model(nn.Module):
                         nn.Conv3d(64, 128, kernel_size=size, padding=size//2, stride=1, bias=bias),
                         nn.BatchNorm3d(128),
                         nn.ReLU(inplace=True),
-                        nn.Conv3d(128, 135, kernel_size=1, padding=0, stride=1, bias=bias))
+                        nn.Conv3d(128, output_size, kernel_size=1, padding=0, stride=1, bias=bias))
 
     def forward(self, x):
         out = self.layers(x)
         return out
 
 
+class SE3BasicModel(nn.Module):
+
+    def __init__(self, output_size, filter_size=5):
+        super(SE3BasicModel, self).__init__()
+
+        features = [(1,),
+                    (4, 4, 4, 4),
+                    (4, 4, 4, 4),
+                    # (4, 4, 4, 4),
+                    (output_size,)]
+
+        common_block_params = {
+            'size': filter_size,
+            'padding': filter_size//2,
+            'stride': 1,
+            'normalization': 'instance',
+            'radial_window': partial(
+                basis_kernels.gaussian_window_fct_convenience_wrapper,
+                mode='compromise', border_dist=0, sigma=0.6),
+        }
+
+        block_params = [
+            {'activation': (F.relu, F.sigmoid)},
+            {'activation': (F.relu, F.sigmoid)},
+            # {'activation': (F.relu, F.sigmoid)},
+            {'activation': None},
+        ]
+
+        assert len(block_params) + 1 == len(features)
+
+        blocks = [GatedBlock(features[i], features[i + 1],
+                             **common_block_params, **block_params[i])
+                  for i in range(len(block_params))]
+
+        self.layers = torch.nn.Sequential(
+            *blocks,
+        )
+
+    def forward(self, x):
+        out = self.layers(x)
+        return out
 
 
+class Merge(nn.Module):
+    def forward(self, x1, x2):
+        return torch.cat([x1, x2], dim=1)
+
+
+class UnetModel(nn.Module):
+    def __init__(self, output_size, filter_size=5):
+        super(UnetModel, self).__init__()
+        size = filter_size
+        bias = True
+
+        self.conv1 = nn.Sequential(
+            nn.Conv3d(1, 64, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(64, 64, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm3d(64))
+
+        self.conv2 = nn.Sequential(
+            nn.Conv3d(64, 128, kernel_size=size, padding=size//2, stride=2, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(128, 128, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm3d(128))
+
+        self.conv3 = nn.Sequential(
+            nn.Conv3d(128, 256, kernel_size=size, padding=size//2, stride=2, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(256, 256, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm3d(256))
+
+        self.up1 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv3d(256, 128, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True))
+
+        self.merge1 = Merge()
+
+        self.conv4 = nn.Sequential(
+            nn.Conv3d(256, 128, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(128, 128, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm3d(128))
+
+        self.up2 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            nn.Conv3d(128, 64, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True))
+
+        self.merge2 = Merge()
+
+        self.conv5 = nn.Sequential(
+            nn.Conv3d(128, 64, kernel_size=size, padding=size // 2, stride=1, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(64, 64, kernel_size=size, padding=size//2, stride=1, bias=bias),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm3d(64))
+
+        self.conv_final = nn.Conv3d(64, output_size, kernel_size=1, padding=0, stride=1, bias=bias)
+
+
+    def forward(self, x):
+
+        conv1_out  = self.conv1(x)
+        conv2_out  = self.conv2(conv1_out)
+        conv3_out  = self.conv3(conv2_out)
+        up1_out    = self.up1(conv3_out)
+        merge1_out = self.merge1(conv2_out, up1_out)
+        conv4_out  = self.conv4(merge1_out)
+        up2_out    = self.up2(conv4_out)
+        merge2_out = self.merge2(conv1_out, up2_out)
+        conv5_out  = self.conv5(merge2_out)
+        out        = self.conv_final(conv5_out)
+
+        return out
+
+
+class SE3UnetModel(nn.Module):
+    def __init__(self, output_size, filter_size=5):
+        super(SE3UnetModel, self).__init__()
+        size = filter_size
+        bias = True
+
+        common_params = {
+            'radial_window': partial(basis_kernels.gaussian_window_fct_convenience_wrapper,
+                                     mode='compromise', border_dist=0, sigma=0.6),
+            'batch_norm_momentum': 0.01,
+        }
+
+        features = [(1,),
+                    (4, 4, 4, 4),      #  64 channels
+                    (8, 8, 8, 8),      # 128 channels
+                    (16, 16, 16, 16),  # 256 channels
+                    (8, 8, 8, 8),      # 128 channels
+                    (4, 4, 4, 4),
+                    (output_size,)]
+
+        self.conv1 = nn.Sequential(
+            GatedBlock(features[0], features[1], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params),
+            GatedBlock(features[1], features[1], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params))
+
+        self.conv2 = nn.Sequential(
+            GatedBlock(features[1], features[2], size=size, padding=size//2, stride=2, activation=(F.relu, F.sigmoid), normalization="instance", **common_params),
+            GatedBlock(features[2], features[2], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params))
+
+        self.conv3 = nn.Sequential(
+            GatedBlock(features[2], features[3], size=size, padding=size//2, stride=2, activation=(F.relu, F.sigmoid), normalization="instance", **common_params),
+            GatedBlock(features[3], features[3], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params))
+
+        self.up1 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            GatedBlock(features[3], features[4], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params))
+
+        self.merge1 = Merge()
+
+        self.conv4 = nn.Sequential(
+            GatedBlock(features[3], features[4], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params),
+            GatedBlock(features[4], features[4], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params))
+
+        self.up2 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="nearest"),
+            GatedBlock(features[4], features[5], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params))
+
+        self.merge2 = Merge()
+
+        self.conv5 = nn.Sequential(
+            GatedBlock(features[4], features[5], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params),
+            GatedBlock(features[5], features[5], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params))
+
+        self.conv_final = GatedBlock(features[5], features[6], size=1, padding=0, stride=1, activation=None, normalization=None, **common_params)
+
+    def forward(self, x):
+
+        conv1_out  = self.conv1(x)
+        conv2_out  = self.conv2(conv1_out)
+        conv3_out  = self.conv3(conv2_out)
+        up1_out    = self.up1(conv3_out)
+        merge1_out = self.merge1(conv2_out, up1_out)
+        conv4_out  = self.conv4(merge1_out)
+        up2_out    = self.up2(conv4_out)
+        merge2_out = self.merge2(conv1_out, up2_out)
+        conv5_out  = self.conv5(merge2_out)
+        out        = self.conv_final(conv5_out)
+
+        return out
 
 
 def dice_coefficient_orig_binary(y_pred, y_true, y_pred_is_dist=False,
@@ -350,6 +484,16 @@ def infer(model, loader, loss_function):
     return out_images, loss
 
 
+model_classes = {"basic_k5":
+                 partial(BasicModel, filter_size=5),
+                 "se3_basic_k5":
+                 partial(SE3BasicModel, filter_size=5),
+                 "unet_k5":
+                 partial(UnetModel, filter_size=5),
+                 "se3_unet_k5":
+                 partial(SE3UnetModel, filter_size=5)
+                 }
+
 def main(args):
 
     torch.backends.cudnn.benchmark = True
@@ -438,7 +582,7 @@ def main(args):
 
 
     output_size = 135
-    model = Model(output_size=output_size)
+    model = model_classes[args.model](output_size=output_size)
     if torch.cuda.is_available():
         model.cuda()
 
@@ -543,6 +687,8 @@ if __name__ == '__main__':
 
     parser.add_argument("--data-filename", required=True,
                         help="The name of the data file.")
+    parser.add_argument("--model", choices=model_classes.keys(), required=True,
+                        help="Which model definition to use")
     parser.add_argument("--patch-size", default=64, type=int,
                         help="Size of patches (default: %(default)s)")
     parser.add_argument("--loss", choices=['dice', 'dice_onehot', 'cross_entropy'],
