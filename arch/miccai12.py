@@ -17,6 +17,54 @@ from se3_cnn.blocks import GatedBlock
 from se3_cnn.datasets import MRISegmentation
 from se3_cnn import basis_kernels
 
+tensorflow_available = True
+try:
+    import tensorflow as tf
+
+    class Logger(object):
+        '''From https://github.com/yunjey/pytorch-tutorial/tree/master/tutorials/04-utils/tensorboard'''
+
+        def __init__(self, log_dir):
+            """Create a summary writer logging to log_dir."""
+            self.writer = tf.summary.FileWriter(log_dir)
+
+        def scalar_summary(self, tag, value, step):
+            """Log a scalar variable."""
+            summary = tf.Summary(
+                value=[tf.Summary.Value(tag=tag, simple_value=value)])
+            self.writer.add_summary(summary, step)
+
+        def histo_summary(self, tag, values, step, bins=1000):
+            """Log a histogram of the tensor of values."""
+
+            # Create a histogram using numpy
+            counts, bin_edges = np.histogram(values, bins=bins)
+
+            # Fill the fields of the histogram proto
+            hist = tf.HistogramProto()
+            hist.min = float(np.min(values))
+            hist.max = float(np.max(values))
+            hist.num = int(np.prod(values.shape))
+            hist.sum = float(np.sum(values))
+            hist.sum_squares = float(np.sum(values ** 2))
+
+            # Drop the start of the first bin
+            bin_edges = bin_edges[1:]
+
+            # Add bin edges and counts
+            for edge in bin_edges:
+                hist.bucket_limit.append(edge)
+            for c in counts:
+                hist.bucket.append(c)
+
+            # Create and write Summary
+            summary = tf.Summary(value=[tf.Summary.Value(tag=tag, histo=hist)])
+            self.writer.add_summary(summary, step)
+            self.writer.flush()
+
+except:
+    tensorflow_available = False
+
 
 class FlattenSpacial(nn.Module):
     def __init__(self):
@@ -180,7 +228,6 @@ class SE3UnetModel(nn.Module):
     def __init__(self, output_size, filter_size=5):
         super(SE3UnetModel, self).__init__()
         size = filter_size
-        bias = True
 
         common_params = {
             'radial_window': partial(basis_kernels.gaussian_window_fct_convenience_wrapper,
@@ -189,12 +236,15 @@ class SE3UnetModel(nn.Module):
         }
 
         features = [(1,),
-                    (4, 4, 4, 4),      #  64 channels
-                    (8, 8, 8, 8),      # 128 channels
-                    (16, 16, 16, 16),  # 256 channels
-                    (8, 8, 8, 8),      # 128 channels
-                    (4, 4, 4, 4),
+                    (12, 12, 12),
+                    (24, 24, 24),
+                    (48, 48, 48),
+                    (24, 24, 24),
+                    (12, 12, 12),
                     (output_size,)]
+
+        # TODO: do padding using ReplicationPad3d?
+        # TODO: on validation - use overlapping patches and only use center of patch
 
         self.conv1 = nn.Sequential(
             GatedBlock(features[0], features[1], size=size, padding=size//2, stride=1, activation=(F.relu, F.sigmoid), normalization="instance", **common_params),
@@ -589,7 +639,7 @@ def main(args):
     print("The model contains {} parameters".format(
         sum(p.numel() for p in model.parameters() if p.requires_grad)))
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
     optimizer.zero_grad()
 
     loss_function = None
@@ -607,11 +657,19 @@ def main(args):
         from functools import partial
         loss_function = partial(cross_entropy_loss, class_weight=class_weight)
 
+    # Set the logger
+    if args.log_to_tensorboard:
+        from datetime import datetime
+        now = datetime.now()
+        logger = Logger('./logs/%s/' % now.strftime("%Y%m%d_%H%M%S"))
+
     epoch_start_index = 0
     if args.mode == 'train':
 
         for epoch in range(epoch_start_index, args.training_epochs):
 
+            training_losses = []
+            training_accs = []
             for batch_idx, (data, target, img_index, patch_index, valid) in enumerate(train_loader):
 
                 model.train()
@@ -632,17 +690,27 @@ def main(args):
 
                 time_start = time.perf_counter()
                 loss = loss_function(out, y)
+                training_losses.append(loss)
                 loss.backward()
                 if batch_idx % args.batchsize_multiplier == args.batchsize_multiplier-1:
                     optimizer.step()
                     optimizer.zero_grad()
 
                 binary_dice_acc = dice_coefficient_orig_binary(out, y, y_pred_is_dist=True).data[0]
+                training_accs.append(binary_dice_acc)
 
                 print("[{}:{}/{}] loss={:.4} acc={:.4} time={:.2}".format(
                     epoch, batch_idx, len(train_loader),
                     float(loss.data[0]), binary_dice_acc,
                     time.perf_counter() - time_start))
+
+            acc_avg = np.mean(training_accs)
+            loss_avg = np.mean(training_losses)
+
+            print('TRAINING SET [{}:{}/{}] loss={:.4} acc={:.2}'.format(
+                epoch, len(train_loader)-1, len(train_loader),
+                loss_avg.data[0], acc_avg))
+
 
             validation_ys, validation_loss = infer(model,
                                                    validation_loader,
@@ -673,6 +741,29 @@ def main(args):
             print('VALIDATION SET [{}:{}/{}] loss={:.4} acc={:.2}'.format(
                 epoch, len(train_loader)-1, len(train_loader),
                 validation_loss, validation_binary_dice_acc))
+
+            if args.log_to_tensorboard:
+
+                # ============ TensorBoard logging ============#
+                # (1) Log the scalar values
+                info = {
+                    'training set avg loss': loss_avg.data[0],
+                    'training set accuracy': acc_avg,
+                    'validation set avg loss': validation_loss,
+                    'validation set accuracy': validation_binary_dice_acc,
+                }
+
+                step = epoch
+                for tag, value in info.items():
+                    logger.scalar_summary(tag, value, step + 1)
+
+                # (2) Log values and gradients of the parameters (histogram)
+                for tag, value in model.named_parameters():
+                    tag = tag.replace('.', '/')
+                    logger.histo_summary(tag, value.data.cpu().numpy(), step + 1)
+                    logger.histo_summary(tag + '/grad', value.grad.data.cpu().numpy(),
+                                         step + 1)
+
 
             # Adjust patch indices at end of each epoch
             train_set.initialize_patch_indices()
@@ -709,6 +800,8 @@ if __name__ == '__main__':
                         help="number of minibatch iterations accumulated before applying the update step, effectively multiplying batchsize (default: %(default)s)")
     parser.add_argument("--class-weighting", action='store_true', default=False,
                         help="switches on class weighting, only used in cross entropy loss (default: %(default)s)")
+    parser.add_argument("--log-to-tensorboard", action="store_true", default=False,
+                        help="Whether to output log information in tensorboard format (default: %(default)s)")
 
     args = parser.parse_args()
 
