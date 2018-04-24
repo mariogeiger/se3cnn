@@ -280,10 +280,10 @@ class SkipSumBlock(nn.Module):
     '''
     def __init__(self, features, **common_params):
         super(SkipSumBlock, self).__init__()
+        raise NotImplementedError('TODO: nonlinearity only after summation')
         # self.skip_conv = NonlinearityBlock(features, features, **common_params)
-        raise NotImplementedError()
     def forward(self, enc, dec):
-        raise NotImplementedError()
+        raise NotImplementedError('TODO: nonlinearity only after summation')
         # assert enc.shape == dec.shape
         # enc_res = self.skip_conv(enc)
         # return enc_res + dec
