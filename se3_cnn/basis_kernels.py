@@ -347,11 +347,28 @@ def cube_basis_kernels_analytical(size, R_in, R_out, radial_window):
         z, y, x = np.meshgrid(rng, rng, rng)
         r_field = np.sqrt(x ** 2 + y ** 2 + z ** 2)
         sh_cubes = []
+
+        # import ipdb; ipdb.set_trace()
+
         for J, Q_J in zip(order_irreps, Q_list):
             Y_J = _sample_Y_J(J, r_field)
-            K_J = np.einsum('mn,n...->m...', Q_J, Y_J)
-            K_J = K_J.reshape(2 * order_out + 1, 2 * order_in + 1, size, size, size)
-            sh_cubes.append(K_J)
+
+
+            from lie_learn.representations.SO3.wigner_d import wigner_D_matrix
+            for i in range(2*J+1):
+                D_i = wigner_D_matrix(J, *(2*np.pi*np.random.rand(3)))
+                Y_J_rot = np.einsum('mn,n...->m...', D_i, Y_J)
+                K_J = np.einsum('mn,n...->m...', Q_J, Y_J)
+                K_J = K_J.reshape(2 * order_out + 1, 2 * order_in + 1, size, size, size)
+                sh_cubes.append(K_J)
+
+
+            # K_J = np.einsum('mn,n...->m...', Q_J, Y_J)
+            # K_J = K_J.reshape(2 * order_out + 1, 2 * order_in + 1, size, size, size)
+            # sh_cubes.append(K_J)
+
+
+
         return sh_cubes, r_field
 
     # only odd sidelength filters supported for now
@@ -398,11 +415,32 @@ def gaussian_window_fct(sh_cubes, r_field, order_irreps, radii, J_max_list, sigm
         window = _gauss_window(r_field, r0=r, sigma=sigma)
         window = window[np.newaxis, np.newaxis, :]
         # for each spherical shell at radius r window sh_cube if J does not exceed the bandlimit J_max
-        for idx_J, J in enumerate(order_irreps):
+
+
+
+
+        basis_idx = 0
+        for J in order_irreps:
             if J > J_max:
                 break
             else:
-                basis.append(sh_cubes[idx_J] * window)
+                for _ in range(2*J+1):
+                    basis.append(sh_cubes[basis_idx] * window)
+                    basis_idx += 1
+
+
+
+        # for idx_J, J in enumerate(order_irreps):
+        #     if J > J_max:
+        #         break
+        #     else:
+        #         basis.append(sh_cubes[idx_J] * window)
+
+
+
+
+
+
     if len(basis) > 0:
         basis = np.stack(basis, axis=0)
     else:
