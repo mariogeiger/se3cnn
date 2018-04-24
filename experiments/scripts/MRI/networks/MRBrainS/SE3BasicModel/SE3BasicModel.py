@@ -10,7 +10,7 @@ from se3_cnn import basis_kernels
 
 class network(nn.Module):
 
-    def __init__(self, output_size, filter_size=5):
+    def __init__(self, output_size, args):
         super(network, self).__init__()
 
         features = [(3,),
@@ -20,8 +20,8 @@ class network(nn.Module):
                     (output_size,)]
 
         common_block_params = {
-            'size': filter_size,
-            'padding': filter_size//2,
+            'size': args.kernel_size,
+            'padding': args.kernel_size//2,
             'stride': 1,
             'normalization': 'instance',
             'radial_window': partial(
