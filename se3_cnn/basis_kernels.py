@@ -358,7 +358,7 @@ def cube_basis_kernels_analytical(size, R_in, R_out, radial_window):
             for i in range(2*J+1):
                 D_i = wigner_D_matrix(J, *(2*np.pi*np.random.rand(3)))
                 Y_J_rot = np.einsum('mn,n...->m...', D_i, Y_J)
-                K_J = np.einsum('mn,n...->m...', Q_J, Y_J)
+                K_J = np.einsum('mn,n...->m...', Q_J, Y_J_rot)
                 K_J = K_J.reshape(2 * order_out + 1, 2 * order_in + 1, size, size, size)
                 sh_cubes.append(K_J)
 
