@@ -89,7 +89,7 @@ def train_loop(model, train_loader, optimizer, epoch):
         training_outs.append(out.data.cpu().numpy())
         training_accs.append(acc.data[0])
 
-        log_obj.write("[{}:{}/{}] loss={:.4} acc={:.2} time={:.2}".format(
+        log_obj.write("[{}:{}/{}] loss={:.4} acc={:.3} time={:.2}".format(
             epoch, batch_idx, len(train_loader),
             float(loss.data[0]), float(acc.data[0]),
             time.perf_counter() - time_start))
@@ -221,10 +221,10 @@ def main(checkpoint):
 
             validation_loss_avg = np.mean(validation_losses)
 
-            log_obj.write('TRAINING SET [{}:{}/{}] loss={:.4} acc={:.2}'.format(
+            log_obj.write('TRAINING SET [{}:{}/{}] loss={:.4} acc={:.3}'.format(
                 epoch, len(train_loader)-1, len(train_loader),
                 loss_avg, acc_avg))
-            log_obj.write('VALIDATION SET [{}:{}/{}] loss={:.4} acc={:.2}'.format(
+            log_obj.write('VALIDATION SET [{}:{}/{}] loss={:.4} acc={:.3}'.format(
                 epoch, len(train_loader)-1, len(train_loader),
                 validation_loss_avg, validation_acc))
 
@@ -240,7 +240,7 @@ def main(checkpoint):
                 test_loss_avg = np.mean(test_losses)
 
                 log_obj.write(
-                    'TEST SET [{}:{}/{}] loss={:.4} acc={:.2}'.format(
+                    'TEST SET [{}:{}/{}] loss={:.4} acc={:.3}'.format(
                         epoch, len(train_loader) - 1, len(train_loader),
                         test_loss_avg, test_acc))
 
@@ -321,7 +321,7 @@ def main(checkpoint):
         validation_acc = np.sum(out.argmax(-1) == y) / len(y)
         validation_loss_avg = np.mean(validation_losses)
 
-        log_obj.write('VALIDATION SET: loss={:.4} acc={:.2}'.format(
+        log_obj.write('VALIDATION SET: loss={:.4} acc={:.3}'.format(
             validation_loss_avg, validation_acc))
 
     elif args.mode == 'test':
@@ -331,7 +331,7 @@ def main(checkpoint):
         test_acc = np.sum(out.argmax(-1) == y) / len(y)
         test_loss_avg = np.mean(test_losses)
 
-        log_obj.write('TEST SET: loss={:.4} acc={:.2}'.format(
+        log_obj.write('TEST SET: loss={:.4} acc={:.3}'.format(
             test_loss_avg, test_acc))
 
 
