@@ -2,6 +2,8 @@ To better reproduce the experiments of the article *3D Steerable CNNs: Learning 
 
 
 
-# repository moved
-
+# New code
+For point cloud I recommand to use this code:
 [https://github.com/e3nn/e3nn](https://github.com/e3nn/e3nn)
+
+For voxel I don't know which one is better
